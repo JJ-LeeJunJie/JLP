@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SG Property Pathway — Buyer Profile Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* ---- Print-only affordability summary sheet ----
+     Built and populated on demand by generatePDF(); hidden on screen,
+     shown alone when printed/saved as PDF. Native browser print, not
+     a library — nothing to load, nothing that can fail to load. */
+  #print-sheet{ display:none; }
+  @media print{
+    body > *:not(#print-sheet){ display:none !important; }
+    #print-sheet{
+      display:block; font-family: var(--font-sans); color:#111; padding:12mm;
+    }
+    #print-sheet h1{ font-family: var(--font-display); font-size:20px; margin-bottom:2px; }
+    #print-sheet .ps-date{ font-size:11px; color:#666; margin-bottom:18px; }
+    #print-sheet h2{ font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:#333; border-bottom:1px solid #ccc; padding-bottom:4px; margin:16px 0 8px; }
+    #print-sheet .ps-row{ display:flex; justify-content:space-between; font-size:12.5px; padding:4px 0; }
+    #print-sheet .ps-row span:first-child{ color:#555; }
+    #print-sheet .ps-row span:last-child{ font-weight:600; }
+    #print-sheet .ps-note{ font-size:11px; color:#666; margin-top:6px; }
+    #print-sheet .ps-foot{ margin-top:26px; padding-top:12px; border-top:1px solid #ccc; font-size:10px; color:#777; line-height:1.5; }
+    #print-sheet .ps-contact{ margin-top:8px; font-size:11.5px; font-weight:700; color:#111; }
+  }
+
+  /* ---- Real photos on the 5 pathway cards ----
+     PATH_MEDIA (in the script below) is the single place to swap a
+     photo out — set img/alt/credit and it takes over the card the
+     next render. Falls back to the original line-art icon if a photo
+     fails to load, and falls back to a labelled placeholder tile if
+     no photo is set at all, so a card is never blank or broken. */
+  .path-thumb.photo{ padding:0; align-items:stretch; }
+  .path-thumb.photo img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .path-thumb.placeholder{ flex-direction:column; align-items:center; justify-content:center; gap:3px; color:var(--ink-3); }
+  .path-thumb.placeholder svg{ width:20px; height:20px; opacity:0.55; }
+  .path-thumb.placeholder .ph-label{ font-size:7.5px; letter-spacing:0.03em; text-transform:uppercase; opacity:0.7; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">SG</div>
+    <div class="brand-name">Pathway<span>Pro</span></div>
+  </div>
+  <div class="topbar-note">Regulations as of 2026 · MAS stress rate 4.0%</div>
+</header>
+
+<!-- ============ INTRO SCREEN — captures the 5 core numbers before the dashboard appears ============ -->
+<section id="intro-screen" class="intro-wrap" aria-label="Buyer profile intake">
+  <div class="intro-card">
+    <div class="panel-eyebrow">Buyer Profile</div>
+    <h2 class="intro-title">Let's start with your numbers</h2>
+    <p class="intro-sub">Drag the slider or type a number directly — either works. You can fine-tune everything else once you're in.</p>
+
+    <div class="intro-field">
+      <label for="i-age-num">Buyer age</label>
+      <div class="dual-input">
+        <input type="range" id="i-age-slider" min="21" max="75" step="1" value="21">
+        <input type="number" id="i-age-num" min="21" max="75" step="1" placeholder="e.g. 32">
+      </div>
+    </div>
+
+    <div class="intro-field">
+      <label for="i-income-num">Fixed monthly household income</label>
+      <div class="dual-input">
+        <input type="range" id="i-income-slider" min="3000" max="30000" step="250" value="3000">
+        <input type="number" id="i-income-num" min="3000" max="30000" step="250" placeholder="e.g. 7,500">
+      </div>
+    </div>
+
+    <div class="intro-field">
+      <label for="i-income-var-num">Variable income (bonus, commission)</label>
+      <div class="dual-input">
+        <input type="range" id="i-income-var-slider" min="0" max="15000" step="250" value="0">
+        <input type="number" id="i-income-var-num" min="0" max="15000" step="250" placeholder="e.g. 0">
+      </div>
+    </div>
+
+    <div class="intro-field">
+      <label for="i-cpf-num">CPF Ordinary Account funds</label>
+      <div class="dual-input">
+        <input type="range" id="i-cpf-slider" min="0" max="500000" step="5000" value="0">
+        <input type="number" id="i-cpf-num" min="0" max="500000" step="5000" placeholder="e.g. 85,000">
+      </div>
+    </div>
+
+    <div class="intro-field">
+      <label for="i-cash-num">Liquid cash savings</label>
+      <div class="dual-input">
+        <input type="range" id="i-cash-slider" min="0" max="500000" step="5000" value="0">
+        <input type="number" id="i-cash-num" min="0" max="500000" step="5000" placeholder="e.g. 60,000">
+      </div>
+    </div>
+
+    <p class="hint" id="intro-error" style="display:none">Fill in all five fields before continuing — type a number or drag the matching slider.</p>
+    <button type="button" id="intro-submit" class="cta-btn primary intro-submit">Submit</button>
+  </div>
+</section>
+
+<main class="wrap" id="dashboard" style="display:none">
+
+  <!-- ============ LEFT WINDOW: BUYER PROFILE ARCHETYPE ============ -->
+  <section class="left" aria-label="Buyer profile archetype panel">
+    <div class="panel-eyebrow">Buyer Profile</div>
+
+    <div class="avatar-card">
+      <div class="household-stage" id="household-stage" aria-live="polite"></div>
+      <div class="archetype-name" id="arch-name">First-Timer Achiever</div>
+      <div class="archetype-sub" id="arch-sub">Citizen couple · Mid income band</div>
+      <div class="badge-row" id="badge-row"></div>
+    </div>
+
+    <div class="section-card">
+      <h3>Household composition</h3>
+      <div class="input-row">
+        <div class="input-label"><label for="s-age">Buyer age</label><span class="val" id="v-age">32</span></div>
+        <input type="range" id="s-age" min="21" max="75" value="32" step="1">
+      </div>
+      <div class="input-row">
+        <div class="input-label"><label for="s-hhtype">Buyer(s) citizenship profile</label></div>
+        <select id="s-hhtype">
+          <option value="cc">Citizen / Citizen couple</option>
+          <option value="cpr">Citizen / PR couple</option>
+          <option value="prpr">PR / PR couple</option>
+          <option value="single35">Single 35+ (Citizen)</option>
+          <option value="foreigner">Foreigner</option>
+        </select>
+        <p class="hint" id="single-hint" style="display:none">Below 35 — BTO Single Scheme, HDB resale (Single Singles Scheme) and EC (Joint Singles Scheme, two singles applying jointly) all need both applicants at least 35. Raise the age slider to unlock them.</p>
+      </div>
+      <div class="input-row">
+        <div class="input-label"><span>Individuals staying in the home</span></div>
+        <div class="stepper-row">
+          <span class="stepper-name">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="6" r="3"/><path d="M9 20v-6a3 3 0 0 1 6 0v6"/></svg>
+            Toddlers / young children
+          </span>
+          <div class="stepper">
+            <button type="button" class="step-btn" data-target="toddlers" data-step="-1" aria-label="Remove one toddler">−</button>
+            <span class="step-count" id="v-toddlers">0</span>
+            <button type="button" class="step-btn" data-target="toddlers" data-step="1" aria-label="Add one toddler">+</button>
+          </div>
+        </div>
+        <div class="stepper-row">
+          <span class="stepper-name">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10" cy="5" r="3"/><path d="M7 21v-8a3 3 0 0 1 6 0v8"/><path d="M16 10v11"/></svg>
+            Grandparents
+          </span>
+          <div class="stepper">
+            <button type="button" class="step-btn" data-target="grandparents" data-step="-1" aria-label="Remove one grandparent">−</button>
+            <span class="step-count" id="v-grandparents">0</span>
+            <button type="button" class="step-btn" data-target="grandparents" data-step="1" aria-label="Add one grandparent">+</button>
+          </div>
+        </div>
+        <p class="hint" id="gen-hint" style="display:none">Multi-generation household detected — 3Gen BTO income ceiling of $21,000 applied.</p>
+      </div>
+    </div>
+
+    <div class="section-card">
+      <h3>Financial inputs</h3>
+      <div class="input-row">
+        <div class="input-label"><label for="s-income">Fixed monthly household income</label><span class="val" id="v-income">$7,500</span></div>
+        <input type="range" id="s-income" min="3000" max="30000" value="7500" step="250">
+      </div>
+      <div class="input-row">
+        <div class="input-label"><label for="s-income-var">Variable income (bonus, commission)</label><span class="val" id="v-income-var">$0</span></div>
+        <input type="range" id="s-income-var" min="0" max="15000" value="0" step="250">
+      </div>
+      <div class="input-row">
+        <div class="input-label"><label for="s-cpf">CPF Ordinary Account funds</label><span class="val" id="v-cpf">$85,000</span></div>
+        <input type="range" id="s-cpf" min="0" max="500000" value="85000" step="5000">
+      </div>
+      <div class="input-row">
+        <div class="input-label"><label for="s-cash">Liquid cash savings</label><span class="val" id="v-cash">$60,000</span></div>
+        <input type="range" id="s-cash" min="0" max="500000" value="60000" step="5000">
+      </div>
+      <div class="limits-grid">
+        <div class="limit-card"><div class="limit-label">MSR limit (30%)</div><div class="limit-val ok" id="msr-val">—</div></div>
+        <div class="limit-card"><div class="limit-label">TDSR limit (55%)</div><div class="limit-val ok" id="tdsr-val">—</div></div>
+      </div>
+      <div class="limits-grid budget-grid">
+        <div class="limit-card"><div class="limit-label">HDB (MSR)</div><div class="limit-val" id="budget-hdb">—</div></div>
+        <div class="limit-card"><div class="limit-label">EC (MSR + 5% cash)</div><div class="limit-val" id="budget-ec">—</div></div>
+        <div class="limit-card"><div class="limit-label">Private (TDSR + 5% cash)</div><div class="limit-val" id="budget-pvt">—</div></div>
+      </div>
+      <p class="hint" id="cap-note" style="display:block">—</p>
+    </div>
+
+    <p class="disclaimer">Illustrative eligibility math only, this is not financial advice. Income ceilings, ABSD tiers, LTV and stress-test rates subject to regulation changes</p>
+  </section>
+
+  <!-- ============ RIGHT WINDOW: DYNAMIC PATHWAY FLOWCHART ============ -->
+  <section class="right" aria-label="Dynamic property pathway flowchart">
+
+    <div class="right-header">
+      <div class="rh-title-row">
+        <h2>Property Pathway Map</h2>
+        <div class="root-node"><span class="dot"></span><span id="root-label">Your profile · assessing 5 pathways</span></div>
+      </div>
+      <div class="legend">
+        <div class="leg-item"><div class="leg-dot em"></div>Eligible now</div>
+        <div class="leg-item"><div class="leg-dot fut"></div>Future unlock</div>
+        <div class="leg-item"><div class="leg-dot lk"></div>Locked</div>
+      </div>
+    </div>
+
+    <div class="flow-grid" id="flow-grid"></div>
+
+    <div class="node-title" style="margin-top:6px">Regulatory thresholds — live calculation</div>
+    <div class="node-row" id="reg-nodes"></div>
+
+    <div class="scenario-card">
+      <h3>Future outlook &amp; asset progression path</h3>
+      <div class="input-row">
+        <div class="input-label"><label for="s-growth">Projected salary growth (% p.a.)</label><span class="val" id="v-growth">5%</span></div>
+        <input type="range" id="s-growth" min="0" max="20" value="5" step="1">
+      </div>
+      <div class="input-row">
+        <div class="input-label"><span>Target upgrade horizon</span></div>
+        <div class="horizon-btns" role="group" aria-label="Upgrade horizon">
+          <button class="hbtn active" id="h5" type="button">5 years</button>
+          <button class="hbtn" id="h10" type="button">10 years</button>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label" id="fut-label">Show Future Pathway overlay</span>
+        <button class="tog" id="fut-tog" type="button" role="switch" aria-checked="false" aria-labelledby="fut-label"></button>
+      </div>
+    </div>
+
+    <div id="future-gap-section" style="display:none">
+      <div class="node-title" style="margin-bottom:8px">Future capital gap analysis</div>
+      <div class="future-gap-box" id="future-gap-box"></div>
+    </div>
+
+    <div class="cta-box">
+      <p class="cta-copy">Congratulations on being a <strong id="cta-arch">First-Timer Achiever</strong>! Your specific situation might result in very different conditions and time, let me find the best solution for you.</p>
+      <div class="cta-btns">
+        <button class="cta-btn primary" id="cta-pdf" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download your customized Property Pathway Summary now!
+        </button>
+        <button class="cta-btn secondary" id="cta-chat" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+          WhatsApp me about my numbers
+        </button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div id="print-sheet"></div>
+
+<script>
+/* ============================================================
+   SG Property Pathway Engine — 2026 rule values
+   BTO family ceiling $14,000 · 3Gen (multi-generation) $21,000
+   Single 35+ (2-rm Flexi) $7,000 · EC ceiling $16,000
+   LTV 75% · MSR 30% · TDSR 55% · Stress rate 4.0%
+   ABSD (1st): SC 0% / PR 5% / Foreigner 60%
+   ============================================================ */
+
+const $ = id => document.getElementById(id);
+const fmt  = n => '$' + Math.round(n).toLocaleString('en-SG');
+const fmtK = n => n >= 1000000 ? '$' + (n/1000000).toFixed(2) + 'M' : '$' + Math.round(n/1000) + 'K';
+
+const RULES = {
+  btoFamilyCeiling: 14000,
+  bto3GenCeiling: 21000,
+  btoSingleCeiling: 7000,
+  ecCeiling: 16000,
+  msrCap: 0.30,
+  tdsrCap: 0.55,
+  ltv: 0.75,               // 75% max loan -> 25% total downpayment (cash+CPF), same for HDB and bank loans since Aug 2024
+  minCashDown: 0.05,       // of that 25%, 5% must be cash — bank loans only (EC, private). HDB loans can be paid entirely from CPF+cash.
+  variableIncomeRate: 0.70, // banks count variable income (bonus/commission) at a 70% haircut for MSR/TDSR serviceability
+  stressRate: 0.04,
+  cpfContributionRate: 0.23, // combined employer+employee CPF contribution, credited monthly as new principal
+  cpfInterestRate: 0.025,    // CPF Ordinary Account interest, compounded on the balance (not on new contributions alone)
+  absd: { cc: 0, cpr: 0, single35: 0, prpr: 0.05, foreigner: 0.60 },
+  minPrice: { bto: 380000, resaleHDB: 400000, ec: 1100000, newPvt: 1500000, resalePvt: 1200000 }
+};
+
+let horizon = 5;
+let futureOn = false;
+const counts = { toddlers: 0, grandparents: 0 };
+const COUNT_MAX = { toddlers: 4, grandparents: 4 };
+
+function getInputs() {
+  return {
+    age: +$('s-age').value,
+    toddlers: counts.toddlers,
+    grandparents: counts.grandparents,
+    income: +$('s-income').value,           // fixed income — this is what HDB/EC income ceilings are checked against
+    incomeVariable: +$('s-income-var').value, // bonus/commission — counted at 70% for MSR/TDSR, NOT counted towards income ceilings
+    cpf: +$('s-cpf').value,
+    cash: +$('s-cash').value,
+    hhtype: $('s-hhtype').value,
+    growth: +$('s-growth').value
+  };
+}
+
+function isMultiGen(v) {
+  return v.grandparents > 0 && (v.hhtype === 'cc' || v.hhtype === 'cpr');
+}
+
+/* ---------- Financing engine ----------
+   MSR/TDSR are assessed on fixed + 70%-haircut variable income combined
+   (how banks actually compute it) — separate from the HDB/EC income
+   CEILING check in evaluate(), which HDB assesses on fixed pay only. */
+function financing(v) {
+  const assessableIncome = v.income + RULES.variableIncomeRate * v.incomeVariable;
+  const msrLimit  = assessableIncome * RULES.msrCap;
+  const tdsrLimit = assessableIncome * RULES.tdsrCap;
+  const tenor = Math.max(5, Math.min(30, 65 - v.age));
+  const r = RULES.stressRate / 12;
+  const n = tenor * 12;
+  const factor = r / (1 - Math.pow(1 + r, -n));
+  const maxLoanMSR  = msrLimit  / factor;
+  const maxLoanTDSR = tdsrLimit / factor;
+  return { assessableIncome, msrLimit, tdsrLimit, tenor, factor, maxLoanMSR, maxLoanTDSR };
+}
+
+/* HDB and EC both cap out at their own income ceiling — above it you're not
+   eligible for either at all (see the ceiling checks below), so the loan
+   sizing for those two specifically shouldn't keep climbing with income
+   past that point either. Fixed income is clamped at the ceiling first,
+   then the same 70%-haircut variable income is added on top — a bank will
+   still size the loan around your bonus even on an HDB/EC purchase, this
+   only stops FIXED pay above the ceiling from inflating it further. */
+function cappedMaxLoanMSR(v, fin, incomeCeiling) {
+  const cappedAssessableIncome = Math.min(v.income, incomeCeiling) + RULES.variableIncomeRate * v.incomeVariable;
+  return (cappedAssessableIncome * RULES.msrCap) / fin.factor;
+}
+
+/* Whatever loan you can get, plus every dollar of CPF and cash on hand —
+   that's what you can spend. Deliberately not constrained by the 75%/25%
+   split here; that check happens separately in downpaymentGap() and is
+   surfaced as a caveat instead of silently capping this headline number. */
+function maxAffordable(v, loanCap) {
+  return v.cpf + v.cash + loanCap;
+}
+
+/* At the price maxAffordable() lands on, does the actual downpayment rule
+   hold? 5% of price must be CASH specifically (bank loans only — an HDB
+   loan has no cash-only requirement, pass cashMinRate 0 for those), and
+   CPF + cash together must cover 25% of price (plus ABSD, where it
+   applies). Whatever's short of either is what the caveat reports. */
+function downpaymentGap(price, v, absdRate, cashMinRate) {
+  const cashNeeded  = cashMinRate ? price * cashMinRate : 0;
+  const totalNeeded = price * (1 - RULES.ltv + absdRate);
+  return {
+    cashShort:  Math.max(0, cashNeeded  - v.cash),
+    totalShort: Math.max(0, totalNeeded - (v.cpf + v.cash))
+  };
+}
+
+/* ---------- Eligibility engine (binding-constraint reporting) ---------- */
+function evaluate(v) {
+  const fin = financing(v);
+  const isPRPR = v.hhtype === 'prpr', isSingle = v.hhtype === 'single35',
+        isForeign = v.hhtype === 'foreigner';
+  const absd = RULES.absd[v.hhtype];
+
+  const btoCeil = isSingle ? RULES.btoSingleCeiling
+                : isMultiGen(v) ? RULES.bto3GenCeiling
+                : RULES.btoFamilyCeiling;
+
+  // HDB and EC loan sizing is capped at their own income ceiling — fixed income
+  // above it doesn't buy a bigger loan for these two, since you're not eligible
+  // for either past that point anyway. Private has no such ceiling at all.
+  const hdbLoanCap = cappedMaxLoanMSR(v, fin, btoCeil);
+  const ecLoanCap  = cappedMaxLoanMSR(v, fin, RULES.ecCeiling);
+
+  const budgetHDB = maxAffordable(v, hdbLoanCap);           // BTO/Resale HDB: HDB loan, capped at the BTO income ceiling
+  const budgetEC  = maxAffordable(v, ecLoanCap);            // EC: MSR loan, capped at the EC income ceiling
+  const budgetPvt = maxAffordable(v, fin.maxLoanTDSR);      // Private: TDSR loan, no income ceiling
+
+  const gapHDB = downpaymentGap(budgetHDB, v, 0, 0);                    // HDB loan — no cash-only requirement
+  const gapEC  = downpaymentGap(budgetEC, v, 0, RULES.minCashDown);     // bank loan — 5% must be cash
+  const gapPvt = downpaymentGap(budgetPvt, v, absd, RULES.minCashDown); // bank loan — 5% must be cash
+
+  const paths = {};
+
+  if (isForeign)                              paths.bto = lock('Locked: Residency');
+  else if (isPRPR)                            paths.bto = lock('Locked: Needs 1 Citizen');
+  else if (isSingle && v.age < 35)            paths.bto = lock('Locked: Age (35+, Single Scheme)');
+  else if (v.income > btoCeil)                paths.bto = lock('Locked: Income Ceiling');
+  else if (budgetHDB < RULES.minPrice.bto)    paths.bto = lock('Locked: MSR 30% Limit', 'tdsr');
+  else                                        paths.bto = ok(budgetHDB);
+
+  if (isForeign)                                   paths.resaleHDB = lock('Locked: Residency');
+  else if (isSingle && v.age < 35)                 paths.resaleHDB = lock('Locked: Age (35+, Single Scheme)');
+  else if (budgetHDB < RULES.minPrice.resaleHDB)   paths.resaleHDB = lock('Locked: MSR 30% Limit', 'tdsr');
+  else                                             paths.resaleHDB = ok(budgetHDB);
+
+  if (isForeign)                              paths.ec = lock('Locked: Residency');
+  else if (isPRPR)                            paths.ec = lock('Locked: Needs 1 Citizen');
+  else if (isSingle && v.age < 35)            paths.ec = lock('Locked: Age (35+, Joint Singles Scheme)');
+  else if (v.income > RULES.ecCeiling)        paths.ec = lock('Locked: Income Ceiling');
+  else if (budgetEC < RULES.minPrice.ec)      paths.ec = lock('Locked: MSR 30% Limit', 'tdsr');
+  else                                        paths.ec = ok(budgetEC);
+
+  if (budgetPvt < RULES.minPrice.newPvt)      paths.newPvt = lock('Locked: TDSR 55% Limit', 'tdsr');
+  else                                        paths.newPvt = ok(budgetPvt);
+
+  if (budgetPvt < RULES.minPrice.resalePvt)   paths.resalePvt = lock('Locked: TDSR 55% Limit', 'tdsr');
+  else                                        paths.resalePvt = ok(budgetPvt);
+
+  return {
+    fin, absd, budgetHDB, budgetEC, budgetPvt, btoCeil, paths,
+    loanCaps: { hdb: hdbLoanCap, ec: ecLoanCap, pvt: fin.maxLoanTDSR },
+    gaps: { hdb: gapHDB, ec: gapEC, pvt: gapPvt }
+  };
+
+  function ok(budget)          { return { ok: true,  budget }; }
+  function lock(reason, kind)  { return { ok: false, reason, kind: kind || 'hard' }; }
+}
+
+/* ---------- Future projection ---------- */
+function projectFuture(v) {
+  const growthFactor = Math.pow(1 + v.growth / 100, horizon);
+  const income = v.income * growthFactor;
+  const incomeVariable = v.incomeVariable * growthFactor;
+  const avgIncome = (v.income + income) / 2;
+
+  /* CPF OA balance grows two separate ways: new monthly contributions
+     (principal, from income) plus interest compounding on the balance
+     itself — these are not the same rate and shouldn't be blended. */
+  const monthlyContribution = avgIncome * RULES.cpfContributionRate;
+  const monthlyRate = RULES.cpfInterestRate / 12;
+  const months = horizon * 12;
+  const growth = Math.pow(1 + monthlyRate, months);
+  const cpf = v.cpf * growth + monthlyContribution * ((growth - 1) / monthlyRate);
+
+  const cash = v.cash; // no savings-accrual assumption — cash only changes if the user moves the slider
+  return { ...v, income, incomeVariable, cpf, cash };
+}
+
+/* ============================================================
+   HOUSEHOLD AVATAR — one figure per individual staying
+   ============================================================ */
+function adultFigure(badge, badgeClass, opts = {}) {
+  const h = opts.h || 74;
+  const skin = opts.tone || '#7d8a72';
+  const hair = opts.hair || '#2a4034';
+  const futureCls = opts.future ? ' future' : '';
+  return `
+  <div class="figure${futureCls}" title="${opts.title || ''}">
+    <svg width="36" height="${h}" viewBox="0 0 36 74" aria-hidden="true">
+      <circle class="head-fill" cx="18" cy="13" r="10" fill="${skin}"/>
+      <path class="head-fill" d="M8 12 a10 10 0 0 1 20 0 l0 -2 a10 8 0 0 0 -20 0 z" fill="${hair}"/>
+      <path class="body-fill" d="M18 26 C8 26 4 34 4 44 L4 70 a3 3 0 0 0 3 3 L29 73 a3 3 0 0 0 3 -3 L32 44 C32 34 28 26 18 26 Z" fill="${opts.bodyColor || '#2a4034'}"/>
+    </svg>
+    <span class="fig-badge ${badgeClass}">${badge}</span>
+  </div>`;
+}
+
+function grandparentFigure(opts = {}) {
+  const futureCls = opts.future ? ' future' : '';
+  return `
+  <div class="figure${futureCls}" title="Grandparent staying in the home">
+    <svg width="34" height="66" viewBox="0 0 34 66" aria-hidden="true">
+      <circle class="head-fill" cx="16" cy="12" r="9" fill="#8a9382"/>
+      <path class="head-fill" d="M7 11 a9 9 0 0 1 18 0 l0 -1.5 a9 7 0 0 0 -18 0 z" fill="#c4bda8"/>
+      <path class="body-fill" d="M16 23 C7.5 23 4.5 31 4.5 39 L4.5 62 a3 3 0 0 0 3 3 L24 65 a3 3 0 0 0 3 -3 L27 39 C27 31 24.5 23 16 23 Z" fill="#3a5344"/>
+      <path class="body-fill" d="M29 34 L31 62" stroke="#9c7016" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <circle class="body-fill" cx="29" cy="33" r="2" fill="#9c7016"/>
+    </svg>
+    <span class="fig-badge snr">${opts.future ? '+' + horizon + 'yr' : 'Snr'}</span>
+  </div>`;
+}
+
+function toddlerFigure(opts = {}) {
+  const futureCls = opts.future ? ' future' : '';
+  return `
+  <div class="figure${futureCls}" title="Toddler / young child">
+    <svg width="20" height="40" viewBox="0 0 20 40" aria-hidden="true">
+      <circle class="head-fill" cx="10" cy="8" r="6.5" fill="#9aa58c"/>
+      <path class="body-fill" d="M10 16 C5 16 3 20.5 3 25.5 L3 37 a2.5 2.5 0 0 0 2.5 2.5 L14.5 39.5 a2.5 2.5 0 0 0 2.5 -2.5 L17 25.5 C17 20.5 15 16 10 16 Z" fill="#5a6f4f"/>
+    </svg>
+    <span class="fig-badge child">${opts.future ? '+' + horizon + 'yr' : 'Tot'}</span>
+  </div>`;
+}
+
+function renderHousehold(v) {
+  const olderHair = v.age > 52 ? '#b3ad98' : (v.age > 38 ? '#3a5344' : '#2a4034');
+  const parts = [];
+
+  if (v.hhtype === 'cc') {
+    parts.push(adultFigure('SC', 'sc', { hair: olderHair, title: 'Singapore Citizen' }));
+    parts.push(adultFigure('SC', 'sc', { hair: olderHair, title: 'Singapore Citizen', bodyColor: '#33503f', h: 70 }));
+  } else if (v.hhtype === 'cpr') {
+    parts.push(adultFigure('SC', 'sc', { hair: olderHair, title: 'Singapore Citizen' }));
+    parts.push(adultFigure('PR', 'pr', { hair: olderHair, title: 'Permanent Resident', bodyColor: '#33503f', h: 70 }));
+  } else if (v.hhtype === 'prpr') {
+    parts.push(adultFigure('PR', 'pr', { hair: olderHair, title: 'Permanent Resident' }));
+    parts.push(adultFigure('PR', 'pr', { hair: olderHair, title: 'Permanent Resident', bodyColor: '#33503f', h: 70 }));
+  } else if (v.hhtype === 'single35') {
+    parts.push(adultFigure('SC', 'sc', { hair: olderHair, title: 'Single Citizen 35+' }));
+  } else {
+    parts.push(adultFigure('FR', 'fr', { hair: olderHair, title: 'Foreign national', bodyColor: '#6d5a48' }));
+  }
+
+  for (let i = 0; i < v.grandparents; i++) parts.push(grandparentFigure());
+  for (let i = 0; i < v.toddlers; i++)     parts.push(toddlerFigure());
+
+  $('household-stage').innerHTML = parts.join('');
+}
+
+/* ---------- Archetype naming ---------- */
+function archetype(v, ev) {
+  if (v.hhtype === 'foreigner') return v.income >= 20000 ? 'Foreign Buyer' : 'Foreign Investor';
+  if (isMultiGen(v)) return 'Multi-Gen Family';
+  if (v.hhtype === 'single35')  return v.income >= 10000 ? 'Independent Single' : 'Individual Investor';
+  if (ev.paths.newPvt.ok && v.income >= 16000) return 'Private Upgrader';
+  if (ev.paths.ec.ok && v.income > RULES.btoFamilyCeiling) return 'EC Upgrader';
+  if (ev.paths.bto.ok && v.toddlers > 0) return 'Family Starter';
+  if (ev.paths.bto.ok) return 'First-Time Buyer';
+  if (ev.paths.resaleHDB.ok) return 'Resale Ready-To-Move-In';
+  return 'Early Saver';
+}
+
+/* ---------- Building illustration thumbnails (per property type) ---------- */
+const THUMBS = {
+  /* modern HDB slab block */
+  bto: '<svg viewBox="0 0 140 74" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><line x1="6" y1="70" x2="134" y2="70"/><rect x="30" y="20" width="52" height="50" fill="currentColor" fill-opacity="0.06"/><rect x="82" y="30" width="34" height="40" fill="currentColor" fill-opacity="0.06"/><path d="M38 28h6M50 28h6M62 28h6M38 38h6M50 38h6M62 38h6M38 48h6M50 48h6M62 48h6M38 58h6M50 58h6M62 58h6" stroke-width="2.4" stroke-linecap="round"/><path d="M90 38h5M102 38h5M90 48h5M102 48h5M90 58h5M102 58h5" stroke-width="2.4" stroke-linecap="round"/></svg>',
+  /* older HDB point block, taller & narrower */
+  resaleHDB: '<svg viewBox="0 0 140 74" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><line x1="6" y1="70" x2="134" y2="70"/><rect x="48" y="12" width="44" height="58" fill="currentColor" fill-opacity="0.06"/><path d="M56 22h6M72 22h6M56 32h6M72 32h6M56 42h6M72 42h6M56 52h6M72 52h6M56 62h6M72 62h6" stroke-width="2.4" stroke-linecap="round"/><path d="M66 12v-4" stroke-linecap="round"/></svg>',
+  /* two EC towers with balconies + tree */
+  ec: '<svg viewBox="0 0 140 74" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><line x1="6" y1="70" x2="134" y2="70"/><rect x="34" y="22" width="30" height="48" fill="currentColor" fill-opacity="0.06"/><rect x="70" y="14" width="30" height="56" fill="currentColor" fill-opacity="0.06"/><path d="M34 32h30M34 42h30M34 52h30M34 62h30M70 24h30M70 34h30M70 44h30M70 54h30M70 64h30" stroke-width="1.2"/><path d="M116 70v-14M110 58a6 6 0 0 1 12 0" stroke-linecap="round"/></svg>',
+  /* tall slim glass tower (new launch) */
+  newPvt: '<svg viewBox="0 0 140 74" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><line x1="6" y1="70" x2="134" y2="70"/><path d="M56 70V14l28-8v64" fill="currentColor" fill-opacity="0.06"/><path d="M56 22l28-6M56 32l28-6M56 42l28-4M56 52l28-2M56 62h28" stroke-width="1.2"/><path d="M84 6l6 2v62" fill="currentColor" fill-opacity="0.04"/></svg>',
+  /* established condo block with pool & palm (resale private) */
+  resalePvt: '<svg viewBox="0 0 140 74" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><line x1="6" y1="70" x2="134" y2="70"/><rect x="40" y="20" width="46" height="50" fill="currentColor" fill-opacity="0.06"/><path d="M48 30h8M62 30h8M48 40h8M62 40h8M48 50h8M62 50h8M48 60h8M62 60h8" stroke-width="2.2" stroke-linecap="round"/><path d="M92 70v-16M92 54c0-4 5-6 8-4M92 54c0-4-5-6-8-4" stroke-linecap="round"/><path d="M96 66q6 -2 12 0" stroke-width="1.2" stroke-linecap="round"/></svg>'
+};
+
+const PATH_DEFS = [
+  { id: 'bto',       name: 'BTO HDB',            sub: 'New flat from HDB',     example: 'e.g. Bayshore BTO',      msr: true  },
+  { id: 'resaleHDB', name: 'Resale HDB',         sub: 'Open-market flat',      example: 'e.g. Pinnacle @ Duxton', msr: true  },
+  { id: 'ec',        name: 'Executive Condo',    sub: 'Hybrid public-private', example: 'e.g. Otto Place',        msr: true  },
+  { id: 'newPvt',    name: 'New Launch Private', sub: 'Developer sale, priced at a premium', example: 'e.g. Thomson Reserve',   msr: false },
+  { id: 'resalePvt', name: 'Resale Private',     sub: 'Open-market condo',     example: 'e.g. Treasure at Tampines', msr: false }
+];
+
+/* ============================================================
+   PATH_MEDIA — real photo per pathway card, swap out here
+   ============================================================
+   Set { img, alt } to show a real photo — it replaces the line-art
+   icon automatically on the next render(). Points at local files in
+   /photos (sibling to this /property flowchart folder), not a URL,
+   so nothing here depends on the internet being up. Leave a pathway
+   set to null to show a clearly-labelled "add photo" placeholder
+   instead of guessing or showing nothing. To swap in a newer/hotter
+   project: drop the new photo in /photos and update the path below —
+   optional `credit` shows in the hover tooltip if you need to credit
+   a stock photo.
+   ============================================================ */
+const PATH_MEDIA = {
+  bto:       { img: '../property flowchart/photos/bayshore%20bto.jpg',           alt: 'Bayshore BTO' },
+  resaleHDB: { img: '../property flowchart/photos/pinnacle%20at%20duxton.jpg',   alt: 'Pinnacle @ Duxton' },
+  ec:        { img: '../property flowchart/photos/otto%20place.jpg',             alt: 'Otto Place' },
+  newPvt:    { img: '../property flowchart/photos/thomson%20reserve.jpg',        alt: 'Thomson Reserve' },
+  resalePvt: { img: '../property flowchart/photos/treasure%20at%20tampines.jpg', alt: 'Treasure at Tampines' }
+};
+
+const PLACEHOLDER_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+
+function buildThumb(p) {
+  const media = PATH_MEDIA[p.id];
+  if (media && media.img) {
+    const title = media.credit ? media.alt + ' — ' + media.credit : media.alt;
+    return '<div class="path-thumb photo" data-path="' + p.id + '">' +
+      '<img src="' + media.img + '" alt="' + media.alt + '" title="' + title + '" loading="lazy">' +
+      '</div>';
+  }
+  return '<div class="path-thumb placeholder" data-path="' + p.id + '">' + PLACEHOLDER_ICON + '<span class="ph-label">Add photo</span></div>';
+}
+
+const TOOLTIP = 'Assess current outstanding liabilities/car loans to unlock exact figures.';
+
+/* ============================================================
+   MASTER RENDER
+   ============================================================ */
+function render() {
+  const v = getInputs();
+  const ev = evaluate(v);
+  const fut = projectFuture(v);
+  const evFut = evaluate(fut);
+  const multiGen = isMultiGen(v);
+
+  $('v-age').textContent = v.age;
+  $('v-toddlers').textContent = v.toddlers;
+  $('v-grandparents').textContent = v.grandparents;
+  $('v-income').textContent = fmt(v.income);
+  $('v-income-var').textContent = fmt(v.incomeVariable);
+  $('v-cpf').textContent = fmt(v.cpf);
+  $('v-cash').textContent = fmt(v.cash);
+  $('v-growth').textContent = v.growth + '%';
+  $('gen-hint').style.display = multiGen ? 'block' : 'none';
+  $('single-hint').style.display = (v.hhtype === 'single35' && v.age < 35) ? 'block' : 'none';
+
+  const msrEl = $('msr-val'), tdsrEl = $('tdsr-val');
+  msrEl.textContent  = fmt(ev.fin.msrLimit)  + '/mo';
+  tdsrEl.textContent = fmt(ev.fin.tdsrLimit) + '/mo';
+  msrEl.className  = 'limit-val ' + (ev.fin.msrLimit  >= 2400 ? 'ok' : ev.fin.msrLimit >= 1400 ? 'warn' : 'danger');
+  tdsrEl.className = 'limit-val ' + (ev.fin.tdsrLimit >= 4000 ? 'ok' : 'warn');
+
+  $('budget-hdb').textContent = fmtK(ev.budgetHDB);
+  $('budget-hdb').className = 'limit-val ok';
+  $('budget-ec').textContent = fmtK(ev.budgetEC);
+  $('budget-ec').className = 'limit-val ok';
+  $('budget-pvt').textContent = fmtK(ev.budgetPvt);
+  $('budget-pvt').className = 'limit-val ok';
+
+  function gapText(gap) {
+    if (gap.cashShort <= 0 && gap.totalShort <= 0) return 'meets the downpayment split';
+    const parts = [];
+    if (gap.cashShort > 0)  parts.push(fmtK(gap.cashShort) + ' more cash for the 5%');
+    if (gap.totalShort > 0) parts.push(fmtK(gap.totalShort) + ' more CPF/cash for the 25%');
+    return 'needs ' + parts.join(' + ');
+  }
+  $('cap-note').innerHTML = 'HDB ' + gapText(ev.gaps.hdb) + ' · EC ' + gapText(ev.gaps.ec) + ' · Private ' + gapText(ev.gaps.pvt) + '.';
+    
+
+  const aname = archetype(v, ev);
+  $('arch-name').textContent = aname;
+  $('cta-arch').textContent = aname;
+  const hhLabels = { cc: 'Citizen couple', cpr: 'Citizen/PR couple', prpr: 'PR/PR couple', single35: 'Single 35+ Citizen', foreigner: 'Foreign national' };
+  const band = v.income < 7000 ? 'Starter' : v.income < 14000 ? 'Mid' : v.income < 20000 ? 'Upper' : 'Premium';
+  const compBits = [];
+  if (v.toddlers)     compBits.push(v.toddlers + (v.toddlers > 1 ? ' toddlers' : ' toddler'));
+  if (v.grandparents) compBits.push(v.grandparents + (v.grandparents > 1 ? ' grandparents' : ' grandparent'));
+  $('arch-sub').textContent = hhLabels[v.hhtype] + (compBits.length ? ' · ' + compBits.join(' · ') : '') + ' · ' + band + ' income band';
+
+  const badges = [];
+  if (multiGen)              badges.push('<span class="badge em">3Gen ceiling $21K</span>');
+  if (ev.paths.bto.ok)       badges.push('<span class="badge em">BTO eligible</span>');
+  if (ev.paths.ec.ok)        badges.push('<span class="badge em">EC window</span>');
+  if (ev.paths.resaleHDB.ok && !ev.paths.bto.ok) badges.push('<span class="badge">Resale HDB</span>');
+  if (ev.paths.newPvt.ok)    badges.push('<span class="badge em">Private ready</span>');
+  if (ev.absd > 0)           badges.push('<span class="badge muted">ABSD ' + Math.round(ev.absd * 100) + '%</span>');
+  if (!badges.length)        badges.push('<span class="badge muted">Building capital</span>');
+  $('badge-row').innerHTML = badges.join('');
+
+  renderHousehold(v);
+
+  const openCount = PATH_DEFS.filter(p => ev.paths[p.id].ok).length;
+  $('root-label').textContent = openCount + ' of 5 Pathway Options Available ';
+
+  $('flow-grid').innerHTML = PATH_DEFS.map(p => {
+    const cur = ev.paths[p.id];
+    const later = evFut.paths[p.id];
+    const isActive = cur.ok;
+    const isFuture = !isActive && futureOn && later.ok;
+    const stateCls = isActive ? 'active' : isFuture ? 'future' : 'locked';
+
+    let body = '';
+    if (isActive) {
+      body = '<div class="path-metrics">Max budget<br><strong class="budget-fig">' + fmtK(cur.budget) + '</strong></div>';
+      if (p.id === 'bto' && multiGen) body += '<div class="path-metrics"><strong>3Gen flat</strong> eligible</div>';
+      if (ev.absd > 0 && !p.msr) body += '<div class="path-metrics">ABSD <strong>' + Math.round(ev.absd * 100) + '%</strong></div>';
+    } else if (isFuture) {
+      body = '<div class="future-badge">Unlocks in ' + horizon + 'yr</div>' +
+             '<div class="path-metrics">Proj. budget<br><strong class="budget-fig">' + fmtK(later.budget) + '</strong></div>';
+    } else {
+      body = '<div class="lock-badge ' + (cur.kind === 'tdsr' ? 'tdsr' : '') + '">' + cur.reason + '</div>';
+    }
+
+    const ratio = p.msr ? 'MSR 30%' : 'TDSR 55%';
+    const tip = '<div class="tip-wrap"><button class="tip-trigger" type="button">' + ratio + ' applied ⓘ</button>' +
+                '<div class="tip-box">"' + TOOLTIP + '"</div></div>';
+
+    return '<article class="path-card ' + stateCls + '">' +
+      buildThumb(p) +
+      '<div class="path-body">' +
+        '<div class="path-name">' + p.name + '</div>' +
+        '<div class="path-example">' + p.example + '</div>' +
+        '<div class="path-metrics">' + p.sub + '</div>' +
+        body + tip +
+      '</div></article>';
+  }).join('');
+
+  /* Photo failed to load (offline, hotlink blocked, URL swapped to
+     something bad) — fall back to the line-art icon so the card
+     never shows a broken-image glyph. */
+  document.querySelectorAll('.path-thumb.photo img').forEach(img => {
+    img.addEventListener('error', function () {
+      const wrap = this.closest('.path-thumb');
+      wrap.className = 'path-thumb';
+      wrap.innerHTML = THUMBS[wrap.dataset.path];
+    }, { once: true });
+  });
+
+  const hdbAlive = ev.paths.bto.ok || ev.paths.resaleHDB.ok || ev.paths.ec.ok;
+  const pvtAlive = ev.paths.newPvt.ok || ev.paths.resalePvt.ok;
+  const ceilNote = v.hhtype === 'single35'
+    ? 'Single 35+ ceiling: $7,000 (2-rm Flexi).'
+    : multiGen
+      ? 'Multi-gen (3Gen) ceiling applied: $21,000.'
+      : 'Family BTO ceiling: $14,000 · EC: $16,000.';
+  /* Headline figure beside each threshold's title: the final loan that
+     actually feeds the budgets (HDB/EC loans are income-ceiling-capped),
+     and for ABSD, the dollar amount payable at the private budget. */
+  const regFig = items => '<div class="reg-fig">' + items.map(i =>
+    '<div><strong>' + i.val + '</strong><span>' + i.label + '</span></div>').join('') + '</div>';
+  const msrFig = Math.abs(ev.loanCaps.hdb - ev.loanCaps.ec) < 1
+    ? [{ val: fmtK(ev.loanCaps.hdb), label: 'max loan' }]
+    : [{ val: fmtK(ev.loanCaps.hdb), label: 'HDB loan' }, { val: fmtK(ev.loanCaps.ec), label: 'EC loan' }];
+  const absdAmt = ev.absd * ev.budgetPvt;
+  const absdFig = [{
+    val: absdAmt > 0 ? fmtK(absdAmt) : '$0',
+    label: ev.absd > 0 ? Math.round(ev.absd * 100) + '% of private budget' : 'ABSD payable'
+  }];
+
+  $('reg-nodes').innerHTML =
+    '<div class="reg-node ' + (hdbAlive ? 'highlight' : 'dim') + '">' +
+      '<div class="reg-head"><h4>MSR — 30% cap</h4>' + regFig(msrFig) + '</div>' +
+      '<p>HDB &amp; EC loans only. Current loan limit: ' + fmt(ev.fin.maxLoanMSR) + ' for ' + ev.fin.tenor + ' years loan. ' + ceilNote + '</p>' +
+      '<span class="pill ' + (hdbAlive ? 'ok' : 'warn') + '">' + (hdbAlive ? 'Within margin' : 'Binding constraint') + '</span>' +
+      '<div class="fine">"' + TOOLTIP + '"</div></div>' +
+    '<div class="reg-node ' + (pvtAlive ? 'highlight' : 'dim') + '">' +
+      '<div class="reg-head"><h4>TDSR — 55% cap</h4>' + regFig([{ val: fmtK(ev.loanCaps.pvt), label: 'max loan' }]) + '</div>' +
+      '<p>All property loans. Your ceiling: ' + fmt(ev.fin.maxLoanTDSR) + '/mo including every other debt obligation. Private (bank) loans also need 5% of the price in pure cash — CPF alone can\'t cover that slice, even with plenty of CPF/cash combined.</p>' +
+      '<span class="pill ' + (pvtAlive ? 'ok' : 'warn') + '">' + (pvtAlive ? 'Within margin' : 'Binding constraint') + '</span>' +
+      '<div class="fine">"' + TOOLTIP + '"</div></div>' +
+    '<div class="reg-node highlight">' +
+      '<div class="reg-head"><h4>ABSD exposure</h4>' + regFig(absdFig) + '</div>' +
+      '<p>First property: Citizen 0% · PR 5% · Foreigner 60%. Computed on higher of price/valuation.</p>' +
+      '<span class="pill ' + (ev.absd >= 0.6 ? 'bad' : ev.absd > 0 ? 'warn' : 'ok') + '">' +
+      (ev.absd > 0 ? Math.round(ev.absd * 100) + '% ABSD applies' : 'No ABSD (1st property)') + '</span></div>';
+
+  const fgSection = $('future-gap-section');
+  if (futureOn) {
+    fgSection.style.display = 'block';
+    const unlocked = PATH_DEFS.filter(p => !ev.paths[p.id].ok && evFut.paths[p.id].ok);
+    let html = '<div class="fg-title">' + horizon + '-year projection · ' + v.growth + '% p.a. growth</div>' +
+               'Projected income <strong>' + fmt(fut.income) + '/mo</strong> · CPF OA <strong>' + fmtK(fut.cpf) +
+               '</strong> · Cash <strong>' + fmtK(fut.cash) + '</strong> · Budget <strong>' + fmtK(evFut.budgetPvt) + '</strong><br>';
+    if (unlocked.length) {
+      const target = unlocked[unlocked.length - 1];
+      const gap = Math.max(0, RULES.minPrice[target.id] * (1 - RULES.ltv + RULES.absd[fut.hhtype]) - (fut.cpf + fut.cash));
+      html += 'New pathways unlock: <strong>' + unlocked.map(p => p.name).join(', ') + '</strong>. ';
+      html += gap > 0
+        ? 'Estimated future capital gap to secure ' + target.name + ': <strong>' + fmtK(gap) + '</strong> in additional downpayment funds.'
+        : 'Projected downpayment funds fully cover the ' + target.name + ' entry point — <strong>no capital gap</strong>.';
+    } else {
+      const allOpen = PATH_DEFS.every(p => ev.paths[p.id].ok);
+      html += allOpen
+        ? 'All five pathways are already open today — the horizon widens your budget by <strong>' + fmtK(Math.max(0, evFut.budgetPvt - ev.budgetPvt)) + '</strong>.'
+        : 'No additional pathways unlock within ' + horizon + ' years on these assumptions. Consider raising the savings rate, extending the horizon, or adjusting the target.';
+    }
+    $('future-gap-box').innerHTML = html;
+  } else {
+    fgSection.style.display = 'none';
+  }
+}
+
+/* ---------- Wiring ---------- */
+['s-age','s-income','s-income-var','s-cpf','s-cash','s-growth'].forEach(id => $(id).addEventListener('input', render));
+$('s-hhtype').addEventListener('change', render);
+
+document.querySelectorAll('.step-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const key = btn.dataset.target;
+    const next = counts[key] + (+btn.dataset.step);
+    counts[key] = Math.max(0, Math.min(COUNT_MAX[key], next));
+    render();
+  });
+});
+
+$('h5').addEventListener('click', () => { horizon = 5;  $('h5').classList.add('active'); $('h10').classList.remove('active'); render(); });
+$('h10').addEventListener('click', () => { horizon = 10; $('h10').classList.add('active'); $('h5').classList.remove('active'); render(); });
+
+$('fut-tog').addEventListener('click', function () {
+  futureOn = !futureOn;
+  this.classList.toggle('on', futureOn);
+  this.setAttribute('aria-checked', futureOn);
+  render();
+});
+
+/* ---------- WhatsApp handoff ----------
+   Real wa.me deep link carrying the visitor's live profile summary.
+   No backend, no third-party form service — the visitor's own click
+   is the consenting action, so it doesn't touch the DNC/PDPA rules
+   the way an outbound broadcast to a scraped number would. */
+function buildWhatsAppSummary() {
+  const v = getInputs();
+  const lines = [
+    "Hi! I used your PathwayPro calculator and I'd like to learn more.",
+    "Profile: " + $('arch-name').textContent + " (" + $('arch-sub').textContent + ")",
+    "Monthly income: " + fmt(v.income),
+    "MSR limit: " + $('msr-val').textContent + " · TDSR limit: " + $('tdsr-val').textContent,
+    "Est. max loan: " + $('max-loan').textContent + " · Total budget: " + $('total-budget').textContent,
+    "Looking " + horizon + " years ahead.",
+    "Could you help me understand what's actually realistic for me?"
+  ];
+  return lines.join('\n');
+}
+
+$('cta-chat').addEventListener('click', () => {
+  const agentNumber = '6598287803'; // +65 9828 7803
+  const text = buildWhatsAppSummary();
+  window.open('https://wa.me/' + agentNumber + '?text=' + encodeURIComponent(text), '_blank');
+});
+
+/* ---------- PDF export ----------
+   Builds a print-only summary sheet and hands off to the browser's
+   own print dialog ("Save as PDF" is a native destination in every
+   modern browser) — no external library, nothing that can fail to
+   load. Summarises the visitor's own inputs and live results.
+   Deliberately does NOT fabricate a specific staggered payment/
+   cash-flow schedule, since that needs real per-project downpayment
+   percentages this tool doesn't have — inventing one would risk
+   giving wrong numbers. */
+function row(label, value) {
+  return '<div class="ps-row"><span>' + label + '</span><span>' + value + '</span></div>';
+}
+
+function generatePDF() {
+  const v = getInputs();
+  const ev = evaluate(v);
+  const dateStr = new Date().toLocaleDateString('en-SG', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  let html = '';
+  html += '<h1>PathwayPro — Personal Affordability Summary</h1>';
+  html += '<div class="ps-date">Prepared ' + dateStr + '</div>';
+
+  html += '<h2>Buyer profile</h2>';
+  html += row('Archetype', $('arch-name').textContent);
+  html += row('Household', $('arch-sub').textContent);
+  html += row('Buyer age', v.age);
+
+  html += '<h2>Financial inputs</h2>';
+  html += row('Gross monthly household income', fmt(v.income));
+  html += row('CPF Ordinary Account funds', fmt(v.cpf));
+  html += row('Liquid cash savings', fmt(v.cash));
+
+  html += '<h2>Live borrowing limits</h2>';
+  html += row('MSR limit (30%)', $('msr-val').textContent);
+  html += row('TDSR limit (55%)', $('tdsr-val').textContent);
+  html += row('Est. max loan @ 4.0% stress rate', $('max-loan').textContent);
+  html += row('Total budget', $('total-budget').textContent);
+
+  html += '<h2>Pathways open today</h2>';
+  const open = PATH_DEFS.filter(p => ev.paths[p.id].ok).map(p => p.name);
+  html += '<p class="ps-note">' + (open.length ? open.join(', ') : 'None yet at these inputs — see the regulatory thresholds on-screen for what is binding.') + '</p>';
+
+  if (futureOn) {
+    const fut = projectFuture(v);
+    const evFut = evaluate(fut);
+    const unlocked = PATH_DEFS.filter(p => !ev.paths[p.id].ok && evFut.paths[p.id].ok).map(p => p.name);
+    html += '<h2>' + horizon + '-year outlook</h2>';
+    html += row('Projected income', fmt(fut.income));
+    html += row('Projected budget', fmtK(evFut.budgetPvt));
+    html += '<p class="ps-note">New pathways: ' + (unlocked.length ? unlocked.join(', ') : 'none beyond what is open today') + '</p>';
+  }
+
+  html += '<div class="ps-foot">Illustrative eligibility math only — not financial advice. Income ceilings, ABSD tiers, LTV and ' +
+          'stress-test rates change with cooling measures; verify current values with HDB / MAS / IRAS and your bank before committing.' +
+          '<div class="ps-contact">[Agent Name] · WhatsApp +65 9828 7803 · CEA Reg. No. RXXXXXXX</div></div>';
+
+  $('print-sheet').innerHTML = html;
+  window.print();
+}
+
+$('cta-pdf').addEventListener('click', generatePDF);
+
+render();
+
+/* ---------- Intro screen ----------
+   Slider and number input for each field stay in sync with each other;
+   the number input is what actually starts blank (native sliders can't
+   be "empty"), and that's what Submit checks before handing the five
+   values off to the real dashboard inputs and revealing the dashboard. */
+function bindDualInput(sliderId, numberId) {
+  const slider = $(sliderId), number = $(numberId);
+  slider.addEventListener('input', () => { number.value = slider.value; });
+  number.addEventListener('input', () => {
+    if (number.value === '') return;
+    const clamped = Math.max(+slider.min, Math.min(+slider.max, +number.value));
+    slider.value = clamped;
+  });
+}
+['age', 'income', 'income-var', 'cpf', 'cash'].forEach(key => bindDualInput('i-' + key + '-slider', 'i-' + key + '-num'));
+
+$('intro-submit').addEventListener('click', () => {
+  const fields = [
+    { num: 'i-age-num',        target: 's-age' },
+    { num: 'i-income-num',     target: 's-income' },
+    { num: 'i-income-var-num', target: 's-income-var' },
+    { num: 'i-cpf-num',        target: 's-cpf' },
+    { num: 'i-cash-num',       target: 's-cash' }
+  ];
+  const missing = fields.some(f => $(f.num).value === '');
+  if (missing) {
+    $('intro-error').style.display = 'block';
+    return;
+  }
+  fields.forEach(f => { $(f.target).value = $(f.num).value; });
+  $('intro-screen').style.display = 'none';
+  $('dashboard').style.display = '';
+  render();
+});
+</script>
+</body>
+</html>
